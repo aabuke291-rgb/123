@@ -1,5 +1,5 @@
-// Держит левый Shift, пока активно окно процесса и функция включена кнопкой 'Z'.
-// Повторное нажатие 'Z' отключает удерживание.
+// Держит левый Shift, пока активно окно процесса и функция включена кнопкой HOME.
+// Повторное нажатие HOME отключает удерживание.
 #include <windows.h>
 
 static volatile bool g_run = true;
@@ -28,17 +28,17 @@ static bool GameIsActive()
 
 static DWORD WINAPI HoldShift(LPVOID)
 {
-    bool zWasDown = false;
+    bool homeWasDown = false;
 
     while (g_run) {
         bool active = GameIsActive();
 
-        // Переключение состояния по нажатию 'Z' (переключатель)
-        bool zIsDown = (GetAsyncKeyState('Z') & 0x8000) != 0;
-        if (zIsDown && !zWasDown && active) {
+        // Переключение состояния по нажатию HOME
+        bool homeIsDown = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+        if (homeIsDown && !homeWasDown && active) {
             g_enabled = !g_enabled;
         }
-        zWasDown = zIsDown;
+        homeWasDown = homeIsDown;
 
         // Зажатие работает только при активном окне и включенном режиме
         if (active && g_enabled) {
