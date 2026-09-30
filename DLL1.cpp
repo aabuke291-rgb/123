@@ -1,30 +1,53 @@
-// Минимальная DLL: после инжекта просто зажимает левый Shift и держит его.
-// При выгрузке DLL отпускает клавишу.
+// Держит левый Shift только в окне игры (GLFW30) того процесса, куда инжектнута DLL.
 #include <windows.h>
 
 static volatile bool g_run = true;
 static HANDLE g_thread = nullptr;
+static HWND g_lastWnd = nullptr;
 
-static void SendShift(bool down)
+static const UINT SC_LSHIFT = 0x2A;
+
+static LPARAM DownParam() { return (LPARAM)(1u | (SC_LSHIFT << 16)); }
+static LPARAM UpParam()   { return (LPARAM)(1u | (SC_LSHIFT << 16) | (1u << 30) | (1u << 31)); }
+
+static BOOL CALLBACK EnumProc(HWND h, LPARAM lp)
 {
-    INPUT in = {};
-    in.type = INPUT_KEYBOARD;
-    in.ki.wVk = VK_LSHIFT;
-    in.ki.wScan = (WORD)MapVirtualKeyW(VK_LSHIFT, MAPVK_VK_TO_VSC);
-    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
-    SendInput(1, &in, sizeof(INPUT));
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId() || !IsWindowVisible(h))
+        return TRUE;
+
+    char cls[64] = {};
+    GetClassNameA(h, cls, sizeof(cls));
+    if (lstrcmpA(cls, "GLFW30") == 0) {
+        *(HWND*)lp = h;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static HWND FindGameWindow()
+{
+    HWND h = nullptr;
+    EnumWindows(EnumProc, (LPARAM)&h);
+    return h;
 }
 
 static DWORD WINAPI HoldShift(LPVOID)
 {
-    SendShift(true);
-    // Раз в 50 мс проверяем, что Shift всё ещё зажат, и при необходимости зажимаем снова
+    bool wasFocused = false;
     while (g_run) {
-        if (!(GetAsyncKeyState(VK_LSHIFT) & 0x8000))
-            SendShift(true);
+        HWND h = FindGameWindow();
+        if (h) {
+            bool focused = (GetForegroundWindow() == h);
+            // жмём Shift при новом окне или когда окно снова получило фокус
+            if (h != g_lastWnd || (focused && !wasFocused))
+                PostMessageW(h, WM_KEYDOWN, VK_SHIFT, DownParam());
+            g_lastWnd = h;
+            wasFocused = focused;
+        }
         Sleep(50);
     }
-    SendShift(false);
     return 0;
 }
 
@@ -37,10 +60,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
         break;
     case DLL_PROCESS_DETACH:
         g_run = false;
-        if (g_thread) {
-            WaitForSingleObject(g_thread, 500);
+        if (g_lastWnd)
+            PostMessageW(g_lastWnd, WM_KEYUP, VK_SHIFT, UpParam());
+        if (g_thread)
             CloseHandle(g_thread);
-        }
         break;
     }
     return TRUE;
