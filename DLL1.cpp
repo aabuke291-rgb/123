@@ -1,4 +1,4 @@
-// Держит левый Shift только в окне игры (GLFW30) того процесса, куда инжектнута DLL.
+// Держит левый Shift только в окне игры (LWJGL / GLFW30) того процесса, куда инжектнута DLL.
 #include <windows.h>
 
 static volatile bool g_run = true;
@@ -19,7 +19,7 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM lp)
 
     char cls[64] = {};
     GetClassNameA(h, cls, sizeof(cls));
-    if (lstrcmpA(cls, "GLFW30") == 0) {
+    if (lstrcmpA(cls, "LWJGL") == 0 || lstrcmpA(cls, "GLFW30") == 0) {
         *(HWND*)lp = h;
         return FALSE;
     }
