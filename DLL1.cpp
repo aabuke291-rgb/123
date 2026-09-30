@@ -1,10 +1,11 @@
-// Держит левый Shift, пока активно окно процесса, в который инжектнута DLL.
-// При переключении в другое окно Shift отпускается.
+// Держит левый Shift, пока активно окно процесса и функция включена кнопкой 'Z'.
+// Повторное нажатие 'Z' отключает удерживание.
 #include <windows.h>
 
 static volatile bool g_run = true;
 static HANDLE g_thread = nullptr;
 static bool g_held = false;
+static bool g_enabled = false;
 
 static void SendShift(bool down)
 {
@@ -27,10 +28,20 @@ static bool GameIsActive()
 
 static DWORD WINAPI HoldShift(LPVOID)
 {
+    bool zWasDown = false;
+
     while (g_run) {
         bool active = GameIsActive();
-        if (active) {
-            // зажимаем, а если игра/система сбросила клавишу, зажимаем снова
+
+        // Переключение состояния по нажатию 'Z' (переключатель)
+        bool zIsDown = (GetAsyncKeyState('Z') & 0x8000) != 0;
+        if (zIsDown && !zWasDown && active) {
+            g_enabled = !g_enabled;
+        }
+        zWasDown = zIsDown;
+
+        // Зажатие работает только при активном окне и включенном режиме
+        if (active && g_enabled) {
             if (!g_held || !(GetAsyncKeyState(VK_LSHIFT) & 0x8000)) {
                 SendShift(true);
                 g_held = true;
@@ -39,8 +50,10 @@ static DWORD WINAPI HoldShift(LPVOID)
             SendShift(false);
             g_held = false;
         }
+
         Sleep(20);
     }
+
     if (g_held) SendShift(false);
     return 0;
 }
