@@ -1,86 +1,47 @@
-// ДИАГНОСТИЧЕСКАЯ версия: показывает, что DLL загрузилась и нашла ли она окно игры.
+// Держит левый Shift, пока активно окно процесса, в который инжектнута DLL.
+// При переключении в другое окно Shift отпускается.
 #include <windows.h>
 
 static volatile bool g_run = true;
 static HANDLE g_thread = nullptr;
-static HWND g_lastWnd = nullptr;
-static char g_foundClass[64] = {};
+static bool g_held = false;
 
-static const UINT SC_LSHIFT = 0x2A;
-
-static LPARAM DownParam() { return (LPARAM)(1u | (SC_LSHIFT << 16)); }
-static LPARAM UpParam()   { return (LPARAM)(1u | (SC_LSHIFT << 16) | (1u << 30) | (1u << 31)); }
-
-static BOOL CALLBACK EnumProc(HWND h, LPARAM lp)
+static void SendShift(bool down)
 {
-    DWORD pid = 0;
-    GetWindowThreadProcessId(h, &pid);
-    if (pid != GetCurrentProcessId() || !IsWindowVisible(h))
-        return TRUE;
-
-    char cls[64] = {};
-    GetClassNameA(h, cls, sizeof(cls));
-    if (lstrcmpA(cls, "LWJGL") == 0 || lstrcmpA(cls, "GLFW30") == 0) {
-        lstrcpyA(g_foundClass, cls);
-        *(HWND*)lp = h;
-        return FALSE;
-    }
-    return TRUE;
+    INPUT in = {};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = VK_LSHIFT;
+    in.ki.wScan = (WORD)MapVirtualKeyW(VK_LSHIFT, MAPVK_VK_TO_VSC);
+    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    SendInput(1, &in, sizeof(INPUT));
 }
 
-static HWND FindGameWindow()
+static bool GameIsActive()
 {
-    HWND h = nullptr;
-    EnumWindows(EnumProc, (LPARAM)&h);
-    return h;
-}
-
-// Список всех окон процесса (если игровое не найдено)
-static BOOL CALLBACK ListProc(HWND h, LPARAM lp)
-{
+    HWND fg = GetForegroundWindow();
+    if (!fg) return false;
     DWORD pid = 0;
-    GetWindowThreadProcessId(h, &pid);
-    if (pid != GetCurrentProcessId())
-        return TRUE;
-    char cls[64] = {};
-    GetClassNameA(h, cls, sizeof(cls));
-    char* buf = (char*)lp;
-    if (lstrlenA(buf) + lstrlenA(cls) + 2 < 900) {
-        lstrcatA(buf, cls);
-        lstrcatA(buf, "\n");
-    }
-    return TRUE;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
 }
 
 static DWORD WINAPI HoldShift(LPVOID)
 {
-    MessageBoxA(nullptr, "DLL загружена", "Диагностика", MB_OK | MB_TOPMOST);
-
-    bool reported = false;
-    bool wasFocused = false;
-    int tries = 0;
     while (g_run) {
-        HWND h = FindGameWindow();
-        if (h) {
-            if (!reported) {
-                reported = true;
-                char msg[128] = "Окно игры найдено, класс: ";
-                lstrcatA(msg, g_foundClass);
-                MessageBoxA(nullptr, msg, "Диагностика", MB_OK | MB_TOPMOST);
+        bool active = GameIsActive();
+        if (active) {
+            // зажимаем, а если игра/система сбросила клавишу, зажимаем снова
+            if (!g_held || !(GetAsyncKeyState(VK_LSHIFT) & 0x8000)) {
+                SendShift(true);
+                g_held = true;
             }
-            bool focused = (GetForegroundWindow() == h);
-            if (h != g_lastWnd || (focused && !wasFocused))
-                PostMessageW(h, WM_KEYDOWN, VK_SHIFT, DownParam());
-            g_lastWnd = h;
-            wasFocused = focused;
-        } else if (!reported && ++tries == 40) { // ~2 секунды без результата
-            reported = true;
-            char list[1024] = "Окно игры НЕ найдено. Окна процесса:\n";
-            EnumWindows(ListProc, (LPARAM)list);
-            MessageBoxA(nullptr, list, "Диагностика", MB_OK | MB_TOPMOST);
+        } else if (g_held) {
+            SendShift(false);
+            g_held = false;
         }
-        Sleep(50);
+        Sleep(20);
     }
+    if (g_held) SendShift(false);
     return 0;
 }
 
@@ -93,10 +54,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
         break;
     case DLL_PROCESS_DETACH:
         g_run = false;
-        if (g_lastWnd)
-            PostMessageW(g_lastWnd, WM_KEYUP, VK_SHIFT, UpParam());
-        if (g_thread)
+        if (g_thread) {
+            WaitForSingleObject(g_thread, 500);
             CloseHandle(g_thread);
+        }
         break;
     }
     return TRUE;
